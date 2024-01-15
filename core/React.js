@@ -46,6 +46,7 @@ function render(el, container) {
 }
 
 let nextUnitOfWork = null;
+let root = null;
 
 function renderV2(vDom, container) {
   nextUnitOfWork = {
@@ -54,6 +55,7 @@ function renderV2(vDom, container) {
     dom: container,
     children: [vDom],
   };
+  root = nextUnitOfWork;
 }
 
 function createDom(vDom) {
@@ -76,11 +78,42 @@ function workLoop(deadline) {
   while (nextUnitOfWork && deadline.timeRemaining() > 0) {
     nextUnitOfWork = performUnitOfWork(nextUnitOfWork);
   }
+
+  if (!nextUnitOfWork && root) {
+    commitRoot(root);
+  }
+
   requestIdleCallback(workLoop);
 }
 
-function initChildren(fiber) {
-  const children = fiber.children || [];
+function commitRoot(fiber) {
+  commitWork(fiber.child);
+  root = null;
+}
+
+function commitWork(fiber) {
+  if (!fiber) {
+    return;
+  }
+
+  let fiberParent = fiber.parent;
+  while (!fiberParent.dom) {
+    fiberParent = fiberParent.parent;
+  }
+
+  const domParent = fiberParent.dom;
+
+  if (fiber.dom) {
+    domParent.append(fiber.dom);
+  }
+
+  commitWork(fiber.child);
+
+  commitWork(fiber.sibling);
+}
+
+function initChildren(fiber, children) {
+  // const children = fiber.children || [];
 
   let prevChild = null;
   children.forEach((child, index) => {
@@ -103,17 +136,50 @@ function initChildren(fiber) {
   });
 }
 
+function updateHostText(fiber) {
+  const children = fiber.children || [];
+  initChildren(fiber, children);
+}
+
+function updateFunctionComponent(fiber) {
+  const children = [fiber.type(fiber.props)];
+  initChildren(fiber, children);
+}
+
 function performUnitOfWork(fiber) {
-  if (!fiber.dom) {
-    const dom = createDom(fiber);
-    fiber.dom = dom;
-    updateProps(dom, fiber.props);
-    fiber.parent.dom.append(dom);
+  const isFunctionComponent = typeof fiber.type === "function";
+
+  if (!isFunctionComponent) {
+    if (!fiber.dom) {
+      const dom = createDom(fiber);
+      fiber.dom = dom;
+      updateProps(dom, fiber.props);
+      // fiber.parent.dom.append(dom);
+    }
   }
 
-  initChildren(fiber);
+  if (isFunctionComponent) {
+    updateFunctionComponent(fiber);
+  } else {
+    updateHostText(fiber);
+  }
 
-  return fiber.child || fiber.sibling || fiber.parent?.sibling;
+  // initChildren(fiber);
+
+  // return fiber.child || fiber.sibling || fiber.parent?.sibling;
+
+  if (fiber.child) {
+    return fiber.child;
+  }
+
+  let nextFiber = fiber;
+  while (nextFiber) {
+    if (nextFiber.sibling) {
+      return nextFiber.sibling;
+    }
+
+    nextFiber = nextFiber.parent;
+  }
 }
 
 requestIdleCallback(workLoop);
